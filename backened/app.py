@@ -3,18 +3,23 @@ Main Flask Application for Voice-Guided AI Hospital Finder
 WITH ADVANCED AI SYMPTOM ANALYZER (90%+ Accuracy)
 """
 import os
+import sys
 import uuid
 from datetime import datetime
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, render_template
 from flask_cors import CORS
 from dotenv import load_dotenv
 import speech_recognition as sr
 from gtts import gTTS
 import tempfile
 
+# ✅ FIX 1: Add backened folder to Python path so imports work correctly
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# ✅ FIX 2: Import models using correct relative import
 from models import db, Hospital, SearchHistory, Specialty, SymptomCategory
 
-# UPDATED: Import advanced symptom analyzer instead of basic one
+# ✅ FIX 3: Import analyzers using correct relative imports
 try:
     from advanced_symptom_analyzer import advanced_symptom_analyzer as symptom_analyzer
     print("✅ Using ADVANCED AI Symptom Analyzer (90%+ accuracy)")
@@ -27,8 +32,15 @@ from hospital_recommender import hospital_recommender
 # Load environment variables
 load_dotenv()
 
+# ✅ FIX 4: Correct static folder path — now pointing to frontend folder
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+FRONTEND_DIR = os.path.join(BASE_DIR, '..', 'frontend')
+
 # Initialize Flask app
-app = Flask(__name__, static_folder='../frontend', static_url_path='')
+app = Flask(__name__, 
+            template_folder=os.path.join(FRONTEND_DIR),
+            static_folder=os.path.join(FRONTEND_DIR),
+            static_url_path='')
 CORS(app)
 
 # Configuration
@@ -50,7 +62,7 @@ with app.app_context():
 @app.route('/')
 def index():
     """Serve the main HTML page"""
-    return send_from_directory('../frontend', 'index.html')
+    return send_from_directory(FRONTEND_DIR, 'index.html')
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
@@ -58,7 +70,7 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.utcnow().isoformat(),
-        'version': '2.0.0',  # Updated version with advanced AI
+        'version': '2.0.0',
         'ai_model': 'advanced' if 'advanced' in str(type(symptom_analyzer)) else 'basic'
     })
 
@@ -67,12 +79,6 @@ def health_check():
 def analyze_symptoms():
     """
     Analyze symptoms and return classification using ADVANCED AI
-    
-    Request body:
-    {
-        "symptoms": "chest pain and shortness of breath",
-        "language": "en"  # optional - auto-detected if not provided
-    }
     """
     try:
         data = request.get_json()
@@ -82,16 +88,12 @@ def analyze_symptoms():
         if not symptoms_text:
             return jsonify({'error': 'Symptoms text is required'}), 400
         
-        # Analyze symptoms with advanced AI
         analysis_result = symptom_analyzer.analyze_symptoms(symptoms_text, language)
         
-        # Get related specialties
         related_specialties = symptom_analyzer.get_related_specialties(
             analysis_result['category']
         )
         analysis_result['related_specialties'] = related_specialties
-        
-        # Add model info
         analysis_result['model_type'] = 'advanced'
         analysis_result['model_version'] = '2.0'
         
@@ -109,21 +111,10 @@ def analyze_symptoms():
 def find_hospitals():
     """
     Find nearby hospitals based on location and symptoms
-    Uses ADVANCED AI for symptom analysis
-    
-    Request body:
-    {
-        "latitude": 17.6868,
-        "longitude": 83.2185,
-        "symptoms": "chest pain",
-        "language": "en",
-        "max_distance": 50  # optional
-    }
     """
     try:
         data = request.get_json()
         
-        # Validate required fields
         latitude = data.get('latitude')
         longitude = data.get('longitude')
         symptoms = data.get('symptoms', '').strip()
@@ -133,7 +124,6 @@ def find_hospitals():
         if latitude is None or longitude is None:
             return jsonify({'error': 'Location coordinates are required'}), 400
         
-        # Analyze symptoms if provided (using ADVANCED AI)
         analysis_result = None
         required_specialties = []
         priority = 'normal'
@@ -144,12 +134,9 @@ def find_hospitals():
                 analysis_result['category']
             )
             priority = analysis_result['priority']
-            
-            # Add model metadata
             analysis_result['model_type'] = 'advanced'
             analysis_result['model_version'] = '2.0'
         
-        # Find hospitals (with improved distance-based ranking)
         hospitals = hospital_recommender.find_nearby_hospitals(
             user_lat=latitude,
             user_lon=longitude,
@@ -159,7 +146,6 @@ def find_hospitals():
             language=language
         )
         
-        # Save search history
         session_id = data.get('session_id', str(uuid.uuid4()))
         if symptoms and hospitals:
             search_record = SearchHistory(
@@ -192,13 +178,6 @@ def find_hospitals():
 def emergency_hospitals():
     """
     Get nearest emergency hospitals for critical situations
-    
-    Request body:
-    {
-        "latitude": 17.6868,
-        "longitude": 83.2185,
-        "language": "en"
-    }
     """
     try:
         data = request.get_json()
@@ -248,11 +227,7 @@ def get_hospital_details(hospital_id):
 
 @app.route('/api/voice-to-text', methods=['POST'])
 def voice_to_text():
-    """
-    Convert voice audio to text
-    
-    Expects audio file in request
-    """
+    """Convert voice audio to text"""
     try:
         if 'audio' not in request.files:
             return jsonify({'error': 'No audio file provided'}), 400
@@ -260,7 +235,6 @@ def voice_to_text():
         audio_file = request.files['audio']
         language = request.form.get('language', 'en-US')
         
-        # Language mapping for speech recognition
         language_map = {
             'en': 'en-US',
             'hi': 'hi-IN',
@@ -270,11 +244,9 @@ def voice_to_text():
         if language in language_map:
             language = language_map[language]
         
-        # Save audio temporarily
         with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_audio:
             audio_file.save(temp_audio.name)
             
-            # Recognize speech
             recognizer = sr.Recognizer()
             with sr.AudioFile(temp_audio.name) as source:
                 audio_data = recognizer.record(source)
@@ -304,15 +276,7 @@ def voice_to_text():
 
 @app.route('/api/text-to-speech', methods=['POST'])
 def text_to_speech():
-    """
-    Convert text to speech
-    
-    Request body:
-    {
-        "text": "Nearest hospital is 2 km away",
-        "language": "en"
-    }
-    """
+    """Convert text to speech"""
     try:
         data = request.get_json()
         text = data.get('text', '')
@@ -321,10 +285,8 @@ def text_to_speech():
         if not text:
             return jsonify({'error': 'Text is required'}), 400
         
-        # Generate speech
         tts = gTTS(text=text, lang=language, slow=False)
         
-        # Save to temporary file
         temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.mp3')
         tts.save(temp_file.name)
         
@@ -399,22 +361,14 @@ def get_specialties():
         return jsonify({'error': 'Failed to get specialties'}), 500
 
 
-# NEW ENDPOINT: Train advanced model (admin only - secure this in production)
 @app.route('/api/admin/train-model', methods=['POST'])
 def train_model():
-    """
-    Train the advanced AI model
-    
-    WARNING: This takes 5-10 minutes. Only call when needed.
-    In production, secure this endpoint with authentication.
-    """
+    """Train the advanced AI model (admin only)"""
     try:
-        # Check for admin key (basic security)
         admin_key = request.headers.get('X-Admin-Key')
         if admin_key != os.getenv('ADMIN_KEY', 'dev-admin-key'):
             return jsonify({'error': 'Unauthorized'}), 401
         
-        # Train the model
         print("🚀 Starting advanced model training...")
         symptom_analyzer._train_advanced_model()
         
